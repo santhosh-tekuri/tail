@@ -51,12 +51,13 @@ type Reader struct {
 }
 
 func (r *Reader) open(name string) error {
-	fi, err := os.Stat(name)
+	f, err := os.Open(name)
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(name)
+	fi, err := f.Stat()
 	if err != nil {
+		_ = f.Close()
 		return err
 	}
 	if r.f != nil {
@@ -64,6 +65,10 @@ func (r *Reader) open(name string) error {
 	}
 	r.fi, r.f, r.n, r.w, r.m = fi, f, 0, time.Time{}, fi.ModTime()
 	return nil
+}
+
+func (r *Reader) Stat() os.FileInfo {
+	return r.fi
 }
 
 func (r *Reader) Read(p []byte) (n int, err error) {
@@ -110,7 +115,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 				case truncated:
 					fmt.Println("file truncated")
 					r.n = 0
-					r.f.Seek(0, os.SEEK_SET)
+					r.f.Seek(0, io.SeekStart)
 					break L
 				case moved:
 					fmt.Println("file moved")
@@ -126,7 +131,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 	n, err := r.f.Seek(offset, whence)
-	if err != nil {
+	if err == nil {
 		r.n = n
 	}
 	return n, err
