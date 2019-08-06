@@ -15,23 +15,26 @@
 package tail
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
 )
 
+var ErrTimeout = errors.New("tail: timedout")
+
 // Open opens the named file for tailing with follow-name in mode O_RDONLY.
 // If there is an error, it will be of type *PathError.
 func Open(name string) (*Reader, error) {
-	return OpenFile(name, 250*time.Millisecond, 10*time.Second)
+	return OpenFile(name, 250*time.Millisecond, 10*time.Second, nil)
 }
 
 // OpenFile is the generalized Open with config options.
 // poll is the polling interval used looking for changes.
 // wait is the amount time it waits for the file to appear, before returning io.EOF.
-func OpenFile(name string, poll, wait time.Duration) (*Reader, error) {
-	r := &Reader{poll: poll, wait: wait}
+func OpenFile(name string, poll, wait time.Duration, timeout <-chan struct{}) (*Reader, error) {
+	r := &Reader{poll: poll, wait: wait, timeout: timeout}
 	if err := r.open(name); err != nil {
 		return nil, err
 	}
@@ -46,8 +49,9 @@ type Reader struct {
 	m  time.Time
 
 	// options
-	poll time.Duration
-	wait time.Duration
+	poll    time.Duration
+	wait    time.Duration
+	timeout <-chan struct{}
 }
 
 func (r *Reader) open(name string) error {
@@ -89,8 +93,12 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 							fmt.Println("timedout")
 							return 0, io.EOF
 						}
-						time.Sleep(r.poll)
-						continue
+						select {
+						case <-r.timeout:
+							return 0, ErrTimeout
+						case <-time.After(r.poll):
+							continue
+						}
 					}
 					return 0, err
 				}
@@ -99,7 +107,11 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 			}
 		L:
 			for {
-				time.Sleep(r.poll)
+				select {
+				case <-r.timeout:
+					return 0, ErrTimeout
+				case <-time.After(r.poll):
+				}
 				if !r.w.IsZero() {
 					break
 				}
