@@ -27,14 +27,10 @@ var ErrTimeout = errors.New("tail: timedout")
 // Open opens the named file for tailing with follow-name in mode O_RDONLY.
 // If there is an error, it will be of type *PathError.
 func Open(name string) (*Reader, error) {
-	return OpenFile(name, 250*time.Millisecond, 10*time.Second, nil)
-}
-
-// OpenFile is the generalized Open with config options.
-// poll is the polling interval used looking for changes.
-// wait is the amount time it waits for the file to appear, before returning io.EOF.
-func OpenFile(name string, poll, wait time.Duration, timeout <-chan struct{}) (*Reader, error) {
-	r := &Reader{poll: poll, wait: wait, timeout: timeout}
+	r := &Reader{
+		Poll:    250 * time.Millisecond,
+		EOFWait: 10 * time.Second,
+	}
 	if err := r.open(name); err != nil {
 		return nil, err
 	}
@@ -48,10 +44,16 @@ type Reader struct {
 	w  time.Time
 	m  time.Time
 
-	// options
-	poll    time.Duration
-	wait    time.Duration
-	timeout <-chan struct{}
+	// options ---
+
+	// Poll is the polling interval used looking for changes.
+	Poll time.Duration
+
+	// EOFWait is the amount time it waits for the file to appear, before returning io.EOF.
+	EOFWait time.Duration
+
+	Timeout  time.Duration
+	TimeoutC <-chan struct{}
 }
 
 func (r *Reader) open(name string) error {
@@ -76,6 +78,7 @@ func (r *Reader) Stat() os.FileInfo {
 }
 
 func (r *Reader) Read(p []byte) (n int, err error) {
+	var wait time.Duration
 	for {
 		n, err := r.f.Read(p)
 		r.n += int64(n)
@@ -89,14 +92,18 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 			if !r.w.IsZero() {
 				if err := r.open(r.f.Name()); err != nil {
 					if os.IsNotExist(err) {
-						if time.Now().Sub(r.w) >= r.wait {
-							fmt.Println("timedout")
+						if time.Now().Sub(r.w) >= r.EOFWait {
+							fmt.Println("eof timedout")
 							return 0, io.EOF
 						}
-						select {
-						case <-r.timeout:
+						if r.Timeout != 0 && wait > r.Timeout {
 							return 0, ErrTimeout
-						case <-time.After(r.poll):
+						}
+						select {
+						case <-r.TimeoutC:
+							return 0, ErrTimeout
+						case <-time.After(r.Poll):
+							wait += r.Poll
 							continue
 						}
 					}
@@ -107,10 +114,14 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 			}
 		L:
 			for {
-				select {
-				case <-r.timeout:
+				if r.Timeout != 0 && wait > r.Timeout {
 					return 0, ErrTimeout
-				case <-time.After(r.poll):
+				}
+				select {
+				case <-r.TimeoutC:
+					return 0, ErrTimeout
+				case <-time.After(r.Poll):
+					wait += r.Poll
 				}
 				if !r.w.IsZero() {
 					break
