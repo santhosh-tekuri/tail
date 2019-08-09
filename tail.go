@@ -93,7 +93,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 				if err := r.open(r.f.Name()); err != nil {
 					if os.IsNotExist(err) {
 						if time.Now().Sub(r.w) >= r.EOFWait {
-							fmt.Println("eof timedout")
+							fmt.Println("eof timedout:", r.f.Name())
 							return 0, io.EOF
 						}
 						if r.Timeout != 0 && wait > r.Timeout {
@@ -109,7 +109,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 					}
 					return 0, err
 				}
-				fmt.Println("new file found")
+				fmt.Println("new file found:", r.f.Name())
 				continue
 			}
 		L:
@@ -136,12 +136,12 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 				case modified:
 					break L
 				case truncated:
-					fmt.Println("file truncated")
+					fmt.Println("file truncated", r.f.Name())
 					r.n = 0
 					r.f.Seek(0, io.SeekStart)
 					break L
 				case moved:
-					fmt.Println("file moved")
+					fmt.Println("file moved", r.f.Name())
 					r.w = time.Now()
 					break L
 				}
